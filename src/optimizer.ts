@@ -1,8 +1,8 @@
 import { AggregatorOptions } from "./";
 
 export const createDefaultOptimizer = () => (
-	useOptimizer: boolean,
-	options: AggregatorOptions
+  useOptimizer: boolean,
+  options: AggregatorOptions
 ): AggregatorOptions => {
-	return options;
+  return options;
 };
