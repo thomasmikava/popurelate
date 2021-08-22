@@ -1,0 +1,68 @@
+{
+  "parser": "@typescript-eslint/parser",
+  "extends": [
+    "plugin:@typescript-eslint/recommended",
+    "plugin:prettier/recommended",
+    "prettier/@typescript-eslint",
+    "plugin:sonarjs/recommended"
+  ],
+  "plugins": [
+    "prettier",
+    "@typescript-eslint",
+    "sonarjs"
+  ],
+  "rules": {
+    "@typescript-eslint/explicit-function-return-type": "off",
+    "indent": "off",
+    "@typescript-eslint/no-explicit-any": "off",
+    "@typescript-eslint/camelcase": "off",
+    "@typescript-eslint/interface-name-prefix": "off",
+    "@typescript-eslint/explicit-member-accessibility": "off",
+    "@typescript-eslint/explicit-module-boundary-types": "off",
+    "@typescript-eslint/consistent-type-definitions": [
+      "error",
+      "interface"
+    ],
+    "comma-dangle": [
+      "error",
+      {
+        "arrays": "only-multiline",
+        "objects": "only-multiline",
+        "imports": "only-multiline",
+        "exports": "only-multiline",
+        "functions": "only-multiline"
+      }
+    ],
+    "prettier/prettier": [
+      "error",
+      {
+        "trailingComma": "es5"
+      }
+    ],
+    "@typescript-eslint/no-use-before-define": "off",
+    "@typescript-eslint/no-non-null-assertion": "off",
+    "@typescript-eslint/no-object-literal-type-assertion": "off",
+    "no-use-before-define": "off",
+    "curly": ["error", "multi-line"],
+    "@typescript-eslint/no-parameter-properties": "off",
+    "prefer-const": [
+      "error",
+      {
+        "destructuring": "all"
+      }
+    ],
+    "max-lines": ["error", 350],
+    "max-params": ["error", 3],
+    "max-lines-per-function": [
+      "error",
+      { "max": 60, "skipBlankLines": true }
+    ],
+    "max-depth": ["error", 4],
+    "max-nested-callbacks": ["error", 4],
+    "array-callback-return": "warn",
+    "eqeqeq": "error",
+    "no-shadow": "warn",
+    "no-nested-ternary": "error",
+    "no-unneeded-ternary": "error"
+  }
+}
