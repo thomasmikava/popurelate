@@ -465,16 +465,19 @@ const releaseNonusableSetters = (
     ) {
       continue;
     }
+    // console.log("---", "\n", each.pipeline, "\n", "---");
     const changingFields = each.IAmChangingFields.fields;
     const willBeNeglectedFields = getNeglectedFields(
       i,
       pipelines,
       changingFields
     );
+    // console.log("delete", willBeNeglectedFields.size === changingFields.size);
     if (willBeNeglectedFields.size === changingFields.size) {
       markRemovable(each.id, finder);
       hasAffected = true;
     }
+    // console.log("\n\n\n\n");
   }
   return hasAffected;
 };
@@ -488,38 +491,42 @@ const getNeglectedFields = (
   const neglectedFields = new Set<string>();
   for (let i = myIndex + 1; i < pipelines.length; ++i) {
     const each = pipelines[i];
+    /* console.log(
+      each.pipeline,
+      each.IAmDependedOnFields,
+      each.IAmChangingFields
+    ); */
+    const recentlyNeglected = new Set<string>();
     if (
       each.IAmChangingFields &&
       !each.IAmChangingFields.isChangingEveryField
     ) {
       for (const field of each.IAmChangingFields.fields) {
-        if (changingFields.has(field)) neglectedFields.add(field);
+        if (changingFields.has(field)) {
+          neglectedFields.add(field);
+          recentlyNeglected.add(field);
+        }
       }
     }
     if (each.IAmChangingFields && each.IAmChangingFields.isChangingEveryField) {
-      for (const field of each.IAmChangingFields.except) {
-        if (!changingFields.has(field)) neglectedFields.add(field);
+      for (const myField of changingFields) {
+        if (!each.IAmChangingFields.except.has(myField)) {
+          neglectedFields.add(myField);
+          recentlyNeglected.add(myField);
+        }
       }
     }
     for (const field of each.IAmDependedOnFields) {
-      if (changingFields.has(field)) neglectedFields.delete(field);
-    }
-
-    ///
-
-    if (
-      each.IAmChangingFields &&
-      !each.IAmChangingFields.isChangingEveryField
-    ) {
-      for (const field of each.IAmChangingFields.fields) {
-        if (changingFields.has(field)) changingFields.delete(field);
+      if (changingFields.has(field)) {
+        neglectedFields.delete(field);
+        recentlyNeglected.add(field);
       }
     }
-    if (each.IAmChangingFields && each.IAmChangingFields.isChangingEveryField) {
-      for (const field of each.IAmChangingFields.except) {
-        if (!changingFields.has(field)) changingFields.delete(field);
-      }
+
+    for (const field of recentlyNeglected) {
+      changingFields.delete(field);
     }
+    if (changingFields.size === 0) break;
   }
   return neglectedFields;
 };

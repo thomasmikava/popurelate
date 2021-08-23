@@ -49,25 +49,6 @@ export const mongoOptimizationHelper: OptimizerHelperArg = {
   getFieldsOfPipeline,
 };
 
-const getObjectFields = (
-  basePath: string,
-  parentPath: string,
-  query: Record<any, any>,
-  fieldSet = new Set<string>()
-) => {
-  for (const field in query) {
-    fieldSet.add(normalizeQueryPath(field));
-    const value = query[field];
-    getDollarSignFields(
-      basePath,
-      joinQueryPath(parentPath, field),
-      value,
-      fieldSet
-    );
-  }
-  return fieldSet;
-};
-
 const getDollarSignFields = (
   basePath: string,
   parentPath: string,
@@ -76,20 +57,28 @@ const getDollarSignFields = (
 ) => {
   if (typeof query === "string") {
     if (query.indexOf("$") === 0) {
-      fieldSet.add(normalizeQueryPath(joinQueryPath(basePath, query.slice(0))));
+      fieldSet.add(normalizeQueryPath(joinQueryPath(basePath, query.slice(1))));
     }
   } else if (Array.isArray(query)) {
     for (const elem of query) {
       getDollarSignFields(basePath, parentPath, elem, fieldSet);
     }
-  } else {
+  } else if (
+    typeof query === "object" &&
+    !!query &&
+    query.constructor === Object
+  ) {
     for (const field in query) {
-      if (field.indexOf("$") !== 0) continue;
+      const startsWithDolar = field.indexOf("$") === 0;
+      const normalized = startsWithDolar ? field.slice(1) : field;
+      if (!startsWithDolar) {
+        fieldSet.add(normalizeQueryPath(joinQueryPath(basePath, normalized)));
+      }
       const value = query[field];
       const newBasePath = field === "$elemMatch" ? parentPath : basePath;
       getDollarSignFields(
         newBasePath,
-        joinQueryPath(parentPath, field),
+        startsWithDolar ? parentPath : joinQueryPath(parentPath, normalized),
         value,
         fieldSet
       );
@@ -99,7 +88,7 @@ const getDollarSignFields = (
 };
 
 const getQueryFields = (query: QueryPipeline["query"]): OptimizerHints => {
-  const dependedFields = getObjectFields("", "", query);
+  const dependedFields = getDollarSignFields("", "", query);
   return {
     IAmDependedOnFields: dependedFields,
     IAmChangingFields: null,
