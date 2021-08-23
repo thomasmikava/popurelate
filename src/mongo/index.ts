@@ -21,8 +21,7 @@ const createMongooLikeEngine = <EngineName extends string>({
       const { findOne, pipelines } = props;
       const normalizedPipelines = pipelinesToMongodbPipelines(pipelines);
       const singleDoc = normalizedPipelines.singleDoc || findOne;
-      // normalizedPipelines.pipelines.forEach(e => console.log(e));
-      // console.log(JSON.stringify(normalizedPipelines.pipelines));
+      const countKey = normalizedPipelines.countKey;
       if (debuggerFn) {
         debuggerFn({
           modelName: props.modelName,
@@ -32,7 +31,12 @@ const createMongooLikeEngine = <EngineName extends string>({
       }
       const aggregate = getAggregateFn(props);
       return aggregate(normalizedPipelines.pipelines).then(data => {
-        if (singleDoc) return data[0];
+        if (singleDoc) {
+          if (data.length === 0 && countKey !== null) {
+            return { [countKey]: 0 }; // if count agggregation is used and 0 documents is returned, return count: 0
+          }
+          return data[0];
+        }
         return data;
       });
     },
@@ -88,9 +92,14 @@ type RawPipeline = any;
 
 export const pipelinesToMongodbPipelines = (
   pipelines: Pipeline[]
-): { pipelines: RawPipeline[]; singleDoc: boolean } => {
+): {
+  pipelines: RawPipeline[];
+  singleDoc: boolean;
+  countKey: string | null;
+} => {
   const realPipelines: RawPipeline[] = [];
   let singleDoc = false;
+  let countKey: string | null = null;
   for (let i = 0; i < pipelines.length; i++) {
     const pipeline = pipelines[i];
     if (pipeline.limit !== undefined) {
@@ -109,22 +118,19 @@ export const pipelinesToMongodbPipelines = (
       realPipelines.push(...populatePipeline(pipeline));
     } else if (pipeline.withCount) {
       realPipelines.push(...withCountPipeline(pipeline));
+      // do not change countKey variable here
       singleDoc = true;
     } else if (pipeline.addFields !== undefined) {
       realPipelines.push({ $addFields: pipeline.addFields });
     } else if (pipeline.count) {
-      realPipelines.push({
-        $group: { _id: null, [pipeline.countKey]: { $sum: 1 } },
-      });
-      realPipelines.push({
-        $project: { _id: 0 },
-      });
+      realPipelines.push({ $count: pipeline.countKey });
+      countKey = pipeline.countKey;
       singleDoc = true;
     } else if (!pipeline.invisible) {
       throw new Error("unsupported pipeline: " + JSON.stringify(pipeline));
     }
   }
-  return { pipelines: realPipelines, singleDoc };
+  return { pipelines: realPipelines, singleDoc, countKey };
 };
 
 interface ParentInfo {

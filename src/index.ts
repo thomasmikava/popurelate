@@ -6,11 +6,8 @@ import {
   QueryBuilderError,
   QueryBuilderModelNotFoundError,
 } from "./errors";
-import {
-  defaultPipelineIs,
-  OptimizerHints,
-  PipeLineIsHelper,
-} from "./optimizer";
+import { OptimizerHints } from "./optimizer";
+import { defaultPipelineIs, PipeLineIsHelper } from "./optimizer/is";
 import { normalizeQueryPath } from "./path";
 
 interface DefaultEngines {
