@@ -6,6 +6,7 @@ import {
   QueryBuilderError,
   QueryBuilderModelNotFoundError,
 } from "./errors";
+import { is } from "./optimizer";
 import { normalizeQueryPath } from "./path";
 
 interface DefaultEngines {
@@ -768,15 +769,8 @@ const addPipelineForFindOne = (pipelines: Pipeline[]): Pipeline[] => {
   let lastIndex = -1;
   for (let i = pipelines.length - 1; i >= 0; --i) {
     const pipeline = pipelines[i];
-    if (
-      pipeline.query !== undefined ||
-      pipeline.limit !== undefined ||
-      pipeline.skip !== undefined ||
-      pipeline.sort !== undefined ||
-      pipeline.rawPipeline !== undefined ||
-      pipeline.count !== undefined ||
-      pipeline.withCount !== undefined
-    ) {
+    if (is.changingCountOrOrder(pipeline) || is.rawPipeline(pipeline)) {
+      // TODO: consider if engine passes different is logic
       lastIndex = i;
       break;
     }
