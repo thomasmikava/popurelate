@@ -6,7 +6,11 @@ import {
   QueryBuilderError,
   QueryBuilderModelNotFoundError,
 } from "./errors";
-import { is } from "./optimizer";
+import {
+  defaultPipelineIs,
+  OptimizerHints,
+  PipeLineIsHelper,
+} from "./optimizer";
 import { normalizeQueryPath } from "./path";
 
 interface DefaultEngines {
@@ -74,6 +78,7 @@ export interface EngineInfo<Name> {
     options: AggregatorOptions
   ) => AggregatorOptions;
   useOptimizer?: boolean;
+  pipeLineIsHelper?: PipeLineIsHelper;
 }
 
 interface AddEngineFn<Engines extends DefaultEngines, Db extends DefaultDb> {
@@ -305,18 +310,18 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     options: IOptions,
     disableOptimizer?: boolean
   ): AggregatorOptions => {
-    if (options.findOne) {
-      options = {
-        ...options,
-        pipelines: addPipelineForFindOne(options.pipelines),
-      };
-    }
-
     const modelName = options.modelName;
 
     const modelInfo = this.getModelInfoByName(modelName);
     const dbInfo = modelInfo.db;
     const engine = modelInfo.db.engine;
+
+    if (options.findOne) {
+      options = {
+        ...options,
+        pipelines: addPipelineForFindOne(options.pipelines, engine),
+      };
+    }
 
     let aggreagatorOptions: AggregatorOptions = {
       ...options,
@@ -487,8 +492,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
           invisible: true,
           optimizer: true,
           useOptimizer: opt.use,
-          usedFields: opt.hints?.usedFields,
-          ignoreUsedFields: opt.hints?.ignoreUsedFields,
+          hints: opt.hints,
         });
       },
       inspect: fn => {
@@ -673,14 +677,14 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
         through: manual.through || relation?.through,
       },
     };
-    if (manual.chindren) {
-      pipeline.populate.chindren = {};
+    if (manual.children) {
+      pipeline.populate.children = {};
       const myInfo = [...parentInfo, pipeline];
-      for (const child in manual.chindren) {
-        pipeline.populate.chindren[child] = this.populationToPipeline(
+      for (const child in manual.children) {
+        pipeline.populate.children[child] = this.populationToPipeline(
           options,
           pipeline.populate.modelName,
-          manual.chindren[child],
+          manual.children[child],
           myInfo,
           globalPathPrefix + (appendBrackets ? "[]" : ""),
           localPathPrefix + (appendBrackets ? "[]" : "")
@@ -710,7 +714,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
         if (populate !== undefined) {
           const children = this.populationToObjects(populate);
           if (Object.keys(children).length > 0) {
-            arr[field].manual.chindren = children;
+            arr[field].manual.children = children;
           }
         }
       } else if (popul === false || popul === undefined) {
@@ -746,11 +750,11 @@ const populationOptionsToRequiredPopulationOptions = <Db extends DefaultDb>(
   options: PopulatePipelineOptions
 ): FilledPopulateOptions<Db> => {
   let childrenObj: FilledPopulations<Db> | undefined = undefined;
-  if (options.chindren) {
+  if (options.children) {
     childrenObj = {};
-    for (const key in options.chindren) {
+    for (const key in options.children) {
       childrenObj[key] = populationOptionsToRequiredPopulationOptions(
-        options.chindren[key]!.populate
+        options.children[key]!.populate
       );
     }
   }
@@ -765,12 +769,15 @@ const populationOptionsToRequiredPopulationOptions = <Db extends DefaultDb>(
   };
 };
 
-const addPipelineForFindOne = (pipelines: Pipeline[]): Pipeline[] => {
+const addPipelineForFindOne = (
+  pipelines: Pipeline[],
+  engine: EngineInfo<any>
+): Pipeline[] => {
+  const is = engine.pipeLineIsHelper || defaultPipelineIs;
   let lastIndex = -1;
   for (let i = pipelines.length - 1; i >= 0; --i) {
     const pipeline = pipelines[i];
-    if (is.changingCountOrOrder(pipeline) || is.rawPipeline(pipeline)) {
-      // TODO: consider if engine passes different is logic
+    if (is.changingCountOrOrder(pipeline)) {
       lastIndex = i;
       break;
     }
@@ -783,7 +790,9 @@ const addPipelineForFindOne = (pipelines: Pipeline[]): Pipeline[] => {
 
 interface PopulationInfo<Db extends DefaultDb> {
   field: string;
-  manual: PopulateOptions<Db>;
+  manual: PopulateOptions<Db> & {
+    children?: Record<string, PopulationInfo<Db>>;
+  };
 }
 
 type AllProps =
@@ -791,15 +800,10 @@ type AllProps =
   | "sort"
   | "limit"
   | "skip"
-  | "field"
   | "populate"
   | "project"
   | "withCount"
-  | "countKey"
-  | "docsKey"
   | "rawPipeline"
-  | "docsPipelines"
-  | "chindren"
   | "invisible"
   | "addFields"
   | "count";
@@ -859,8 +863,7 @@ export type OptimizerPipeline = NullifyOthers<{
   invisible: true;
   optimizer: true;
   useOptimizer: boolean | undefined;
-  usedFields: string[] | undefined;
-  ignoreUsedFields: string[] | undefined;
+  hints: Partial<OptimizerHints> | undefined;
 }>;
 
 export type Pipeline =
@@ -914,7 +917,7 @@ export interface PopulatePipelineOptions {
   localField: string;
   globalPathPrefix: string;
   localPathPrefix: string;
-  chindren?: Record<string, PopulatePipeline>;
+  children?: Record<string, PopulatePipeline>;
 }
 
 interface PopulateOptions<Db extends DefaultDb> {
@@ -928,10 +931,6 @@ interface PopulateOptions<Db extends DefaultDb> {
   localField?: string;
   foreignField?: string;
   populate?: Populate<Db>;
-  /**
-   * @deprecated do not use
-   */
-  chindren?: Record<string, PopulationInfo<Db>>;
 }
 
 export interface FilledPopulateOptions<Db extends DefaultDb> {
@@ -1003,22 +1002,27 @@ export interface QueryBuilder<
   limit: (number?: number) => QueryBuilder<Doc, ModelName, Engines, Db>;
   skip: (number?: number) => QueryBuilder<Doc, ModelName, Engines, Db>;
   withCount: {
-    <CountKey extends string, DocsKey extends string>(keys: {
+    <CountKey extends string, DocsKey extends string, NewDoc = Doc>(keys: {
       countKey: CountKey;
       docsKey: DocsKey;
       skip?: number;
       limit?: number;
       queryBuilder?: (
         queryBuilder: QueryBuilder<Doc, ModelName, Engines, Db>
-      ) => QueryBuilder<Doc, ModelName, Engines, Db>;
-    }): QueryBuilder<WithCount<Doc, CountKey, DocsKey>, ModelName, Engines, Db>;
-    (keys: {
+      ) => QueryBuilder<NewDoc, ModelName, Engines, Db>;
+    }): QueryBuilder<
+      WithCount<NewDoc, CountKey, DocsKey>,
+      ModelName,
+      Engines,
+      Db
+    >;
+    <NewDoc = Doc>(keys: {
       skip?: number;
       limit?: number;
       queryBuilder?: (
         queryBuilder: QueryBuilder<Doc, ModelName, Engines, Db>
-      ) => QueryBuilder<Doc, ModelName, Engines, Db>;
-    }): QueryBuilder<WithCount<Doc>, ModelName, Engines, Db>;
+      ) => QueryBuilder<NewDoc, ModelName, Engines, Db>;
+    }): QueryBuilder<WithCount<NewDoc>, ModelName, Engines, Db>;
     (include?: true): QueryBuilder<WithCount<Doc>, ModelName, Engines, Db>;
     (include: false): QueryBuilder<Doc, ModelName, Engines, Db>;
   };
@@ -1044,10 +1048,7 @@ export interface QueryBuilder<
     options?:
       | {
           use?: boolean;
-          hints?: {
-            usedFields?: string[];
-            ignoreUsedFields?: string[];
-          };
+          hints?: Partial<OptimizerHints>;
         }
       | boolean
   ) => QueryBuilder<Doc, ModelName, Engines, Db>;

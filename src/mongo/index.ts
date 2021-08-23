@@ -1,6 +1,7 @@
-import { createDefaultOptimizer } from "./optimizer";
-import { joinQueryPath, normalizeQueryPath } from "./path";
-import { EngineInfo, WithCountPipeline, Pipeline, PopulatePipeline } from "./";
+import { createDefaultOptimizer } from "../optimizer";
+import { joinQueryPath, normalizeQueryPath } from "../path";
+import { EngineInfo, WithCountPipeline, Pipeline, PopulatePipeline } from "..";
+import { mongoOptimizationHelper } from "./optimizer";
 
 const createMongooLikeEngine = <EngineName extends string>({
   getAggregateFn,
@@ -35,6 +36,8 @@ const createMongooLikeEngine = <EngineName extends string>({
         return data;
       });
     },
+    optimizer: mongoOptimizer,
+    pipeLineIsHelper: mongoOptimizationHelper.pipelineIs,
     ...rest,
   };
 };
@@ -51,7 +54,7 @@ const mongooseAggregator = ({
   return model.aggregate.bind(model);
 };
 
-const mongoOptimizer = createDefaultOptimizer();
+const mongoOptimizer = createDefaultOptimizer(mongoOptimizationHelper);
 
 const mongodbEngine = ({
   useOptimizer = false,
@@ -60,7 +63,6 @@ const mongodbEngine = ({
   createMongooLikeEngine({
     name: "mongodb",
     getAggregateFn: mognodbAggregator,
-    optimizer: mongoOptimizer,
     useOptimizer,
     debugger: debuggerFn,
   });
@@ -73,7 +75,6 @@ const mongooseEngine = ({
     name: "mongoose",
     getAggregateFn: mongooseAggregator,
     transformModelName: ({ model }) => model.collection.collectionName,
-    optimizer: mongoOptimizer,
     useOptimizer,
     debugger: debuggerFn,
   });
@@ -181,7 +182,7 @@ const populatePipeline = (
       },
     });
   }
-  if (!populate.matchesMany || populate.chindren) {
+  if (!populate.matchesMany || populate.children) {
     realPipelines.push({
       $unwind: {
         path: "$" + asPath,
@@ -191,9 +192,9 @@ const populatePipeline = (
       },
     });
   }
-  if (populate.chindren) {
-    for (const key in populate.chindren) {
-      const child = populate.chindren[key]!;
+  if (populate.children) {
+    for (const key in populate.children) {
+      const child = populate.children[key]!;
       realPipelines.push(
         ...populatePipeline(child, [
           ...parentInfo,
@@ -209,7 +210,7 @@ const populatePipeline = (
   }
   if (
     unwrappedPaths.length > 0 ||
-    (populate.matchesMany && populate.chindren)
+    (populate.matchesMany && populate.children)
   ) {
     const p = parentInfo
       .slice(1)
