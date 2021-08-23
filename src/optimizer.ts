@@ -15,10 +15,10 @@ import {
   WithCountPipeline,
 } from "./";
 
-import { inspect } from "util";
+/* import { inspect } from "util";
 
 export const fullyLog = (...args) =>
-  console.log(...args.map(obj => inspect(obj, false, null, true)));
+  console.log(...args.map(obj => inspect(obj, false, null, true))); */
 
 export interface OptimizerHelperArg {
   getFieldsOfPipeline: (
@@ -110,15 +110,17 @@ const getOptimizedPipelines = (
   const finder = getFinder(transformedPipelines);
   // TODO: decompose populate pipeline
   // TODO: decompose filter
+  // TODO: decompose addFields
   setFields(transformedPipelines, helper);
   addPredefinedRelations(transformedPipelines, helper);
   addFieldRelations(transformedPipelines);
-  // TODO: reorder, release, reorder, release ...until not affected
+  // TODO: release, reorder, release ...until not affected
   const affected = releaseDependencies(transformedPipelines, finder, helper);
-  console.log("affected", affected);
   removeRemovablePipelines(transformedPipelines, helper);
   logPipelines(transformedPipelines);
   // TODO: recompose populate pipeline
+  // TODO: recompose filter
+  // TODO: recompose addFields
 
   for (const each of transformedPipelines) {
     if (!each.removable && helper.pipelineIs.withCount(each.pipeline)) {
@@ -136,7 +138,7 @@ const getOptimizedPipelines = (
 };
 
 const logPipelines = (wrappedPipelines: WrappedPipeline[]) => {
-  wrappedPipelines.forEach(e =>
+  /* wrappedPipelines.forEach(e =>
     fullyLog(
       e,
       "IAmDependedOnPipelineIds",
@@ -144,7 +146,7 @@ const logPipelines = (wrappedPipelines: WrappedPipeline[]) => {
       "pipelineIdsAreDepenedOnMe",
       e.pipelineIdsAreDepenedOnMe
     )
-  );
+  ); */
 };
 
 const getFinder = (pipelines: WrappedPipeline[]): PipelineFinder => {
@@ -185,10 +187,17 @@ const normalizeUseOptimizers = (
 
 const setFields = (pipeliles: WrappedPipeline[], helper: OptimizerHelper) => {
   for (const each of pipeliles) {
-    const {
-      IAmDependedOnFields,
-      IAmChangingFields,
-    } = helper.getFieldsOfPipeline(each.pipeline, helper);
+    let { IAmDependedOnFields, IAmChangingFields } = helper.getFieldsOfPipeline(
+      each.pipeline,
+      helper
+    );
+    if (
+      IAmChangingFields &&
+      !IAmChangingFields.isChangingEveryField &&
+      IAmChangingFields.fields.size === 0
+    ) {
+      IAmChangingFields = null;
+    }
     each.IAmDependedOnFields = IAmDependedOnFields;
     each.IAmChangingFields = IAmChangingFields;
   }
@@ -425,7 +434,94 @@ const releaseDependencies = (
       hasAffected = true;
     }
   }
+
+  if (releaseNonusableSetters(pipelines, finder, helper)) {
+    hasAffected = true;
+  }
+
   return hasAffected;
+};
+
+const releaseNonusableSetters = (
+  pipelines: WrappedPipeline[],
+  finder: PipelineFinder,
+  helper: OptimizerHelper
+) => {
+  let hasAffected = false;
+  const is = helper.pipelineIs;
+  for (let i = 0; i < pipelines.length; ++i) {
+    const each = pipelines[i];
+    if (
+      isMarkedRemovable(each) ||
+      !each.IAmChangingFields ||
+      each.IAmChangingFields.isChangingEveryField
+    ) {
+      continue;
+    }
+
+    if (
+      is.rawPipeline(each.pipeline) ||
+      is.changingCountOrOrder(each.pipeline)
+    ) {
+      continue;
+    }
+    const changingFields = each.IAmChangingFields.fields;
+    const willBeNeglectedFields = getNeglectedFields(
+      i,
+      pipelines,
+      changingFields
+    );
+    if (willBeNeglectedFields.size === changingFields.size) {
+      markRemovable(each.id, finder);
+      hasAffected = true;
+    }
+  }
+  return hasAffected;
+};
+
+const getNeglectedFields = (
+  myIndex: number,
+  pipelines: WrappedPipeline[],
+  changingFields: Set<string>
+): Set<string> => {
+  changingFields = new Set(changingFields);
+  const neglectedFields = new Set<string>();
+  for (let i = myIndex + 1; i < pipelines.length; ++i) {
+    const each = pipelines[i];
+    if (
+      each.IAmChangingFields &&
+      !each.IAmChangingFields.isChangingEveryField
+    ) {
+      for (const field of each.IAmChangingFields.fields) {
+        if (changingFields.has(field)) neglectedFields.add(field);
+      }
+    }
+    if (each.IAmChangingFields && each.IAmChangingFields.isChangingEveryField) {
+      for (const field of each.IAmChangingFields.except) {
+        if (!changingFields.has(field)) neglectedFields.add(field);
+      }
+    }
+    for (const field of each.IAmDependedOnFields) {
+      if (changingFields.has(field)) neglectedFields.delete(field);
+    }
+
+    ///
+
+    if (
+      each.IAmChangingFields &&
+      !each.IAmChangingFields.isChangingEveryField
+    ) {
+      for (const field of each.IAmChangingFields.fields) {
+        if (changingFields.has(field)) changingFields.delete(field);
+      }
+    }
+    if (each.IAmChangingFields && each.IAmChangingFields.isChangingEveryField) {
+      for (const field of each.IAmChangingFields.except) {
+        if (!changingFields.has(field)) changingFields.delete(field);
+      }
+    }
+  }
+  return neglectedFields;
 };
 
 const releaseCountlikeDependencies = (
