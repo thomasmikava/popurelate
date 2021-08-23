@@ -5,12 +5,14 @@ import { EngineInfo, WithCountPipeline, Pipeline, PopulatePipeline } from "./";
 const createMongooLikeEngine = <EngineName extends string>({
   getAggregateFn,
   name,
+  debugger: debuggerFn,
   ...rest
 }: {
   name: EngineName;
   getAggregateFn: (
     options: Parameters<EngineInfo<string>["aggregator"]>[0]
   ) => (pipelines: any) => PromiseLike<any>;
+  debugger?: (args: any) => void;
 } & Partial<Omit<EngineInfo<EngineName>, "name">>): EngineInfo<EngineName> => {
   return {
     name,
@@ -20,6 +22,13 @@ const createMongooLikeEngine = <EngineName extends string>({
       const singleDoc = normalizedPipelines.singleDoc || findOne;
       // normalizedPipelines.pipelines.forEach(e => console.log(e));
       // console.log(JSON.stringify(normalizedPipelines.pipelines));
+      if (debuggerFn) {
+        debuggerFn({
+          modelName: props.modelName,
+          pipelines,
+          normalizedPipelines: normalizedPipelines.pipelines,
+        });
+      }
       const aggregate = getAggregateFn(props);
       return aggregate(normalizedPipelines.pipelines).then(data => {
         if (singleDoc) return data[0];
@@ -46,23 +55,27 @@ const mongoOptimizer = createDefaultOptimizer();
 
 const mongodbEngine = ({
   useOptimizer = false,
-}: { useOptimizer?: boolean } = {}) =>
+  debugger: debuggerFn,
+}: { useOptimizer?: boolean; debugger?: (args: any) => void } = {}) =>
   createMongooLikeEngine({
     name: "mongodb",
     getAggregateFn: mognodbAggregator,
     optimizer: mongoOptimizer,
     useOptimizer,
+    debugger: debuggerFn,
   });
 
 const mongooseEngine = ({
   useOptimizer = false,
-}: { useOptimizer?: boolean } = {}) =>
+  debugger: debuggerFn,
+}: { useOptimizer?: boolean; debugger?: (args: any) => void } = {}) =>
   createMongooLikeEngine({
     name: "mongoose",
     getAggregateFn: mongooseAggregator,
     transformModelName: ({ model }) => model.collection.collectionName,
     optimizer: mongoOptimizer,
     useOptimizer,
+    debugger: debuggerFn,
   });
 
 export const defaultEngines = {
@@ -107,9 +120,7 @@ export const pipelinesToMongodbPipelines = (
       });
       singleDoc = true;
     } else if (!pipeline.invisible) {
-      throw new Error(
-        "unsupported pipeline: " + JSON.stringify(pipeline)
-      );
+      throw new Error("unsupported pipeline: " + JSON.stringify(pipeline));
     }
   }
   return { pipelines: realPipelines, singleDoc };
@@ -163,10 +174,7 @@ const populatePipeline = (
       $lookup: {
         from: populate.transformedModelName,
         localField: normalizeQueryPath(
-          joinQueryPath(
-            populate.globalPathPrefix,
-            populate.localField
-          )
+          joinQueryPath(populate.globalPathPrefix, populate.localField)
         ),
         foreignField: populate.foreignField,
         as: asPath,
@@ -206,8 +214,7 @@ const populatePipeline = (
     const p = parentInfo
       .slice(1)
       .map(
-        (e, index) =>
-          ["x" + index, e.asPath ? e.asPath : e.myIdField] as const
+        (e, index) => ["x" + index, e.asPath ? e.asPath : e.myIdField] as const
       );
     if (unwrappedPaths.length > 0) {
       for (const un of unwrappedPaths) {
@@ -257,8 +264,7 @@ const getGroupId = (parentInfo: ParentInfo[]): unknown => {
   if (parentInfo.length === 1) {
     const parent = parentInfo[0];
     return (
-      "$" +
-      normalizeQueryPath(joinQueryPath(parent.field, parent.myIdField))
+      "$" + normalizeQueryPath(joinQueryPath(parent.field, parent.myIdField))
     );
   }
   const q = { $concat: [] as any[] };
@@ -266,10 +272,7 @@ const getGroupId = (parentInfo: ParentInfo[]): unknown => {
     const parent = parentInfo[i];
     q.$concat.push({
       $toString:
-        "$" +
-        normalizeQueryPath(
-          joinQueryPath(parent.field, parent.myIdField)
-        ),
+        "$" + normalizeQueryPath(joinQueryPath(parent.field, parent.myIdField)),
     });
     if (i < parentInfo.length - 1) {
       q.$concat.push("-%%-");

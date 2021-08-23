@@ -1,6 +1,6 @@
-/* eslint-disable max-params-no-constructor/max-params-no-constructor */
-/* eslint-disable sonarjs/cognitive-complexity */
 /* eslint-disable max-lines */
+/* eslint-disable max-params */
+/* eslint-disable sonarjs/cognitive-complexity */
 import {
   QueryBuilderEngineNotFoundError,
   QueryBuilderError,
@@ -42,11 +42,11 @@ interface ModelQueryBuilder<
   Engines extends DefaultEngines,
   Db extends DefaultDb
 > {
-  find: <Doc = any>(
-    query?: FilterQuery<Db>
+  findMany: <Doc = any>(
+    query?: FilterQuery
   ) => QueryBuilder<Doc[], ModelName, Engines, Db> & Promise<Doc[]>;
   findOne: <Doc = any>(
-    query?: FilterQuery<Db>
+    query?: FilterQuery
   ) => QueryBuilder<Doc, ModelName, Engines, Db>;
   fillPopulations: (populationObject: Populate<Db>) => FilledPopulations<Db>;
 }
@@ -179,9 +179,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
   };
 
   getModelsByDb = (db: any) => {
-    const matchedModels = this.dbs
-      .filter(e => e.db === db)
-      .map(e => e.models);
+    const matchedModels = this.dbs.filter(e => e.db === db).map(e => e.models);
     return matchedModels.reduce(
       (prev, newModels) => ({ ...prev, ...newModels }),
       {} as Record<Db["modelName"], any>
@@ -199,10 +197,9 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
       engineName: db.engline as Engines["name"],
     };
     this.dbs.push(dbInfo);
-    const dbInfoWithoutModles: Omit<
-      DbExtendedInfo<Engines, Db>,
-      "models"
-    > = { ...dbInfo };
+    const dbInfoWithoutModles: Omit<DbExtendedInfo<Engines, Db>, "models"> = {
+      ...dbInfo,
+    };
     delete (dbInfoWithoutModles as any).models;
     for (const modelName in db.models) {
       this.modelInfoByNames[modelName] = {
@@ -274,7 +271,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     modelName: ModelName
   ) => {
     return {
-      find: this.getFindMethod(false, modelName) as any,
+      findMany: this.getFindMethod(false, modelName) as any,
       findOne: this.getFindMethod(true, modelName) as any,
       fillPopulations: this.getNormalizePopulationsMethod(modelName),
     };
@@ -303,26 +300,47 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     return info;
   };
 
-  private getPrmise = async  <Doc>(options: IOptions): Promise<Doc> => {
-      const modelName = options.modelName;
-
-      const modelInfo = this.getModelInfoByName(modelName);
-      const dbInfo = modelInfo.db;
-      const engine = modelInfo.db.engine;
-
-      let aggreagatorOptions: AggregatorOptions = {
+  private getAggregatorOptions = (
+    options: IOptions,
+    disableOptimizer?: boolean
+  ): AggregatorOptions => {
+    if (options.findOne) {
+      options = {
         ...options,
-        db: dbInfo.db,
-        model: modelInfo.model,
+        pipelines: addPipelineForFindOne(options.pipelines),
       };
-      if (engine.optimizer) {
-        aggreagatorOptions = engine.optimizer(
-          !!engine.useOptimizer,
-          aggreagatorOptions
-        );
-      }
+    }
 
-      return engine.aggregator(aggreagatorOptions);
+    const modelName = options.modelName;
+
+    const modelInfo = this.getModelInfoByName(modelName);
+    const dbInfo = modelInfo.db;
+    const engine = modelInfo.db.engine;
+
+    let aggreagatorOptions: AggregatorOptions = {
+      ...options,
+      db: dbInfo.db,
+      model: modelInfo.model,
+    };
+    if (!disableOptimizer && engine.optimizer) {
+      aggreagatorOptions = engine.optimizer(
+        !!engine.useOptimizer,
+        aggreagatorOptions
+      );
+    }
+
+    return aggreagatorOptions;
+  };
+
+  private getPrmise = async <Doc>(
+    aggregatorOptions: AggregatorOptions
+  ): Promise<Doc> => {
+    const modelName = aggregatorOptions.modelName;
+
+    const modelInfo = this.getModelInfoByName(modelName);
+    const engine = modelInfo.db.engine;
+
+    return engine.aggregator(aggregatorOptions);
   };
   // eslint-disable-next-line max-lines-per-function
   private getQueryHelpers = <Doc, ModelName extends Db["modelName"]>(
@@ -347,12 +365,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
               skip?: number;
               limit?: number;
               queryBuilder?: (
-                queryBuilder: QueryBuilder<
-                  Doc,
-                  ModelName,
-                  Engines,
-                  Db
-                >
+                queryBuilder: QueryBuilder<Doc, ModelName, Engines, Db>
               ) => QueryBuilder<Doc, ModelName, Engines, Db>;
             }
       ): any => {
@@ -448,11 +461,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
             manual: {},
           });
         } else if (args.length === 2) {
-          all.push(
-            this.populationToObjects({ [args[0]]: args[1] })[
-              args[0]
-            ]
-          );
+          all.push(this.populationToObjects({ [args[0]]: args[1] })[args[0]]);
         } else {
           const pop = this.populationToObjects(args[1]);
           for (const field in pop) {
@@ -464,20 +473,6 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
           this.populationToPipeline(newOptions, options.modelName, p)
         );
         return createAddPipelineFn(newOptions)(...populatePipelines);
-      },
-      exec: () => {
-        let newOptions = options;
-        if (options.findOne) {
-          newOptions = {
-            ...options,
-            pipelines: options.pipelines.concat([
-              {
-                limit: 1,
-              },
-            ]),
-          };
-        }
-        return this.getPrmise(newOptions);
       },
       queryBuilder: queryBuilder => {
         if (!queryBuilder) return obj;
@@ -495,7 +490,18 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
           ignoreUsedFields: opt.hints?.ignoreUsedFields,
         });
       },
-      ...{__getOptions: () => options},
+      inspect: fn => {
+        if (!fn) return obj;
+        fn({
+          unoptimizedOptions: this.getAggregatorOptions(options, true),
+          optimizedOptions: this.getAggregatorOptions(options, false),
+        });
+        return obj;
+      },
+      exec: () => {
+        return this.getPrmise(this.getAggregatorOptions(options));
+      },
+      ...{ __getOptions: () => options },
     };
     return obj;
   };
@@ -515,16 +521,14 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     const matchedRelations = modelRelations.find(each => {
       if (
         each.model1.name === primaryModelName &&
-        normalizeQueryPath(each.model1.localField) ===
-          normalizedLocalField &&
+        normalizeQueryPath(each.model1.localField) === normalizedLocalField &&
         (!secondaryModelName || each.model2.name === secondaryModelName)
       ) {
         return true;
       }
       if (
         each.model2.name === primaryModelName &&
-        normalizeQueryPath(each.model2.localField) ===
-          normalizedLocalField &&
+        normalizeQueryPath(each.model2.localField) === normalizedLocalField &&
         (!secondaryModelName || each.model1.name === secondaryModelName)
       ) {
         return true;
@@ -558,9 +562,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
       const pipeline = this.populationToPipeline(
         {
           modelName,
-          transformedModelName: this.getModelTransformedName(
-            modelName
-          ),
+          transformedModelName: this.getModelTransformedName(modelName),
           findOne: false,
           pipelines: [],
         },
@@ -570,9 +572,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
       if (pipeline.populate) {
         normalized[
           pipeline.field
-        ] = populationOptionsToRequiredPopulationOptions(
-          pipeline.populate
-        );
+        ] = populationOptionsToRequiredPopulationOptions(pipeline.populate);
       }
     }
 
@@ -619,8 +619,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     const localField =
       manual.localField || relation?.model1.localField || field;
     const localFieldPrefix =
-      (parentGlobalPathPrefix ? parentGlobalPathPrefix + "." : "") +
-      field;
+      (parentGlobalPathPrefix ? parentGlobalPathPrefix + "." : "") + field;
     if (!localField) {
       throw new QueryBuilderError(
         `localField not found for ${localFieldPrefix}`
@@ -628,9 +627,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     }
     const secondaryModelName = manual.model || relation?.model2.name;
     if (!secondaryModelName) {
-      throw new QueryBuilderError(
-        `model not found for ${localFieldPrefix}`
-      );
+      throw new QueryBuilderError(`model not found for ${localFieldPrefix}`);
     }
 
     let matchesMany = false;
@@ -655,11 +652,9 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     } else if (typeof required === "undefined") required = false;
 
     const localPathPrefix =
-      (parentLocalPathPrefix ? parentLocalPathPrefix + "." : "") +
-      localField;
+      (parentLocalPathPrefix ? parentLocalPathPrefix + "." : "") + localField;
     const globalPathPrefix =
-      (parentGlobalPathPrefix ? parentGlobalPathPrefix + "." : "") +
-      field;
+      (parentGlobalPathPrefix ? parentGlobalPathPrefix + "." : "") + field;
 
     const pipeline: PopulatePipeline = {
       parentIdField: this.getModelInfoByName(modelName).db.idField,
@@ -672,9 +667,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
         foreignField,
         matchesMany: matchesMany,
         modelName: secondaryModelName,
-        transformedModelName: this.getModelTransformedName(
-          secondaryModelName
-        ),
+        transformedModelName: this.getModelTransformedName(secondaryModelName),
         required,
         through: manual.through || relation?.through,
       },
@@ -771,6 +764,29 @@ const populationOptionsToRequiredPopulationOptions = <Db extends DefaultDb>(
   };
 };
 
+const addPipelineForFindOne = (pipelines: Pipeline[]): Pipeline[] => {
+  let lastIndex = -1;
+  for (let i = pipelines.length - 1; i >= 0; --i) {
+    const pipeline = pipelines[i];
+    if (
+      pipeline.query !== undefined ||
+      pipeline.limit !== undefined ||
+      pipeline.skip !== undefined ||
+      pipeline.sort !== undefined ||
+      pipeline.rawPipeline !== undefined ||
+      pipeline.count !== undefined ||
+      pipeline.withCount !== undefined
+    ) {
+      lastIndex = i;
+      break;
+    }
+  }
+  return pipelines
+    .slice(0, lastIndex + 1)
+    .concat([{ limit: 1 }])
+    .concat(pipelines.slice(lastIndex + 1));
+};
+
 interface PopulationInfo<Db extends DefaultDb> {
   field: string;
   manual: PopulateOptions<Db>;
@@ -798,19 +814,19 @@ type NullifyOthers<T> = T &
   {
     [key in Exclude<AllProps, keyof T>]?: undefined;
   };
-type QueryPipeline = NullifyOthers<{
-  query: FilterQuery<any>;
+export type QueryPipeline = NullifyOthers<{
+  query: FilterQuery;
 }>;
 
-type SortPipeline = NullifyOthers<{
-  sort: SortQuery<any>;
+export type SortPipeline = NullifyOthers<{
+  sort: SortQuery;
 }>;
 
-type LimitPipeline = NullifyOthers<{
+export type LimitPipeline = NullifyOthers<{
   limit: number;
 }>;
 
-type SkipPipeline = NullifyOthers<{
+export type SkipPipeline = NullifyOthers<{
   skip: number;
 }>;
 
@@ -821,8 +837,8 @@ export type PopulatePipeline = NullifyOthers<{
   populate: PopulatePipelineOptions;
 }>;
 
-type ProjectPipeline = NullifyOthers<{
-  project: Project<any>;
+export type ProjectPipeline = NullifyOthers<{
+  project: Project;
 }>;
 
 export type WithCountPipeline = NullifyOthers<{
@@ -832,20 +848,20 @@ export type WithCountPipeline = NullifyOthers<{
   docsPipelines: Pipeline[];
 }>;
 
-type RawPipeline = NullifyOthers<{
+export type RawPipeline = NullifyOthers<{
   rawPipeline: any;
 }>;
 
-type AddFieldsPipeline = NullifyOthers<{
-  addFields: AddFields<any>;
+export type AddFieldsPipeline = NullifyOthers<{
+  addFields: AddFields;
 }>;
 
-type CountPipeline = NullifyOthers<{
+export type CountPipeline = NullifyOthers<{
   count: true;
   countKey: string;
 }>;
 
-type OptimizerPipeline = NullifyOthers<{
+export type OptimizerPipeline = NullifyOthers<{
   invisible: true;
   optimizer: true;
   useOptimizer: boolean | undefined;
@@ -877,19 +893,19 @@ type WritableIOptions<ModelName = any> = {
   -readonly [key in keyof IOptions<ModelName>]: IOptions<ModelName>[key];
 };
 
-type FilterQuery<Db extends DefaultDb> = {
+type FilterQuery = {
   [key in string]?: any;
 };
 
-type Project<Db extends DefaultDb> = {
+type Project = {
   [key in string]?: any;
 };
 
-type SortQuery<Db extends DefaultDb> = {
+type SortQuery = {
   [key in string]?: any;
 };
 
-type AddFields<Db extends DefaultDb> = {
+type AddFields = {
   [key in string]?: any;
 };
 
@@ -975,15 +991,10 @@ export interface QueryBuilder<
   Engines extends DefaultEngines = any,
   Db extends DefaultDb = any
 > {
-  where: (
-    query?: FilterQuery<Db>
-  ) => QueryBuilder<Doc, ModelName, Engines, Db>;
-  project: (
-    project: Project<Db>
-  ) => QueryBuilder<Doc, ModelName, Engines, Db>;
+  where: (query?: FilterQuery) => QueryBuilder<Doc, ModelName, Engines, Db>;
+  project: (project: Project) => QueryBuilder<Doc, ModelName, Engines, Db>;
   populate: {
-    (field: string): QueryBuilder<Doc, ModelName, Engines, Db> &
-      Promise<Doc>;
+    (field: string): QueryBuilder<Doc, ModelName, Engines, Db> & Promise<Doc>;
     (field: string, options: PopulateOptions<Db>): QueryBuilder<
       Doc,
       ModelName,
@@ -991,15 +1002,10 @@ export interface QueryBuilder<
       Db
     > &
       Promise<Doc>;
-    (bulkPopulate: Populate<Db>): QueryBuilder<
-      Doc,
-      ModelName,
-      Engines,
-      Db
-    > &
+    (bulkPopulate: Populate<Db>): QueryBuilder<Doc, ModelName, Engines, Db> &
       Promise<Doc>;
   };
-  sort: (sort?: SortQuery<Db>) => QueryBuilder<Doc, ModelName, Engines, Db>;
+  sort: (sort?: SortQuery) => QueryBuilder<Doc, ModelName, Engines, Db>;
   limit: (number?: number) => QueryBuilder<Doc, ModelName, Engines, Db>;
   skip: (number?: number) => QueryBuilder<Doc, ModelName, Engines, Db>;
   withCount: {
@@ -1011,12 +1017,7 @@ export interface QueryBuilder<
       queryBuilder?: (
         queryBuilder: QueryBuilder<Doc, ModelName, Engines, Db>
       ) => QueryBuilder<Doc, ModelName, Engines, Db>;
-    }): QueryBuilder<
-      WithCount<Doc, CountKey, DocsKey>,
-      ModelName,
-      Engines,
-      Db
-    >;
+    }): QueryBuilder<WithCount<Doc, CountKey, DocsKey>, ModelName, Engines, Db>;
     (keys: {
       skip?: number;
       limit?: number;
@@ -1029,7 +1030,7 @@ export interface QueryBuilder<
   };
   rawPipeline: (pipeline: any) => QueryBuilder<Doc, ModelName, Engines, Db>;
   addFields: (
-    newFields?: AddFields<Db>
+    newFields?: AddFields
   ) => QueryBuilder<Doc, ModelName, Engines, Db>;
   count: () => QueryBuilder<{ count: number }, ModelName, Engines, Db>;
   as: <T>() => QueryBuilder<T, ModelName, Engines, Db>;
@@ -1055,6 +1056,12 @@ export interface QueryBuilder<
           };
         }
       | boolean
+  ) => QueryBuilder<Doc, ModelName, Engines, Db>;
+  inspect: (
+    fn?: (aggregators: {
+      optimizedOptions: AggregatorOptions;
+      unoptimizedOptions: AggregatorOptions;
+    }) => void
   ) => QueryBuilder<Doc, ModelName, Engines, Db>;
   exec(): Promise<Doc>;
 }
