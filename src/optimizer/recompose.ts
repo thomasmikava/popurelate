@@ -221,28 +221,6 @@ export const haveCommonPath = (set1: Set<any>, set2: Set<any>) => {
   return false;
 };
 
-const isDirectParentOfPopulate = (
-  p1: PopulatePipeline,
-  p2: PopulatePipeline
-): boolean => {
-  const p1Path = getAllPathOfPopulatePipeline(p1);
-  const p2Path = getAllPathOfPopulatePipeline(p2);
-  for (const p2Key of p2Path) {
-    if (!p1Path.has(p2Key)) return false;
-  }
-  return true;
-};
-
-const getAllPathOfPopulatePipeline = (p: PopulatePipeline, set = new Set()) => {
-  set.add(p.field);
-  if (p.populate.children) {
-    for (const key in p.populate.children) {
-      getAllPathOfPopulatePipeline(p.populate.children[key], set);
-    }
-  }
-  return set;
-};
-
 const mergeQueryPipelines = (
   p1: QueryPipeline,
   p2: QueryPipeline
@@ -277,9 +255,8 @@ const mergePopulatePipelines = (
     ...p1,
     populate: {
       ...p1.populate,
-      alreadyPopulated: !(
-        !p1.populate.alreadyPopulated || !p2.populate.alreadyPopulated
-      ),
+      alreadyPopulated:
+        !!p1.populate.alreadyPopulated && !!p2.populate.alreadyPopulated,
       children: {},
     },
   };

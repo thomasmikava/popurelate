@@ -100,12 +100,14 @@ const getOptimizedPipelines = (
   const finder = getFinder(transformedPipelines);
   setFields(transformedPipelines, helper);
   recalculateDependencies(transformedPipelines, finder, helper);
+
   markSameSetters(transformedPipelines);
 
   reorderAndMarkRemovable(transformedPipelines, finder, helper);
 
   removeRemovablePipelines(transformedPipelines, helper);
 
+  // fullyLog(transformedPipelines);
   // fullyLog(transformedPipelines.map(e => e.pipeline));
   recomposePipelines(transformedPipelines, finder); //, counter, helper, finder);
 
@@ -168,18 +170,6 @@ const reorderAndMarkRemovable = (
       "QueryBuilder optimizer: Too much steps while reordering pipelines"
     );
   }
-};
-
-const logPipelines = (wrappedPipelines: WrappedPipeline[]) => {
-  // wrappedPipelines.forEach(e =>
-  //   fullyLog(
-  //     e,
-  //     "IAmDependedOnPipelineIds",
-  //     e.IAmDependedOnPipelineIds,
-  //     "pipelineIdsDepenedOnMe",
-  //     e.pipelineIdsDepenedOnMe
-  //   )
-  // );
 };
 
 const getFinder = (pipelines: WrappedPipeline[]): PipelineFinder => {

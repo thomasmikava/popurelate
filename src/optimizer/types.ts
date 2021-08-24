@@ -1,6 +1,6 @@
 import { Pipeline } from "..";
 
-type ChangingFields =
+export type ChangingFields =
   | { isChangingEveryField: true; except: Set<string> }
   | { isChangingEveryField: false; fields: Set<string> };
 

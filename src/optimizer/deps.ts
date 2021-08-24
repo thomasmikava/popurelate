@@ -1,9 +1,9 @@
+/* eslint-disable max-depth */
 import { OptimizerHelper } from ".";
 import { Pipeline } from "..";
 import { isSubPathOf } from "../path";
 import { FINAL_DOC_ID } from "./const";
-import { haveCommonPath } from "./recompose";
-import { PipelineFinder, WrappedPipeline } from "./types";
+import { ChangingFields, PipelineFinder, WrappedPipeline } from "./types";
 
 const addDependenciesIf = (
   each: WrappedPipeline,
@@ -175,7 +175,6 @@ const releaseNonusableSetters = (
       pipelines,
       changingFields
     );
-    // console.log("delete", willBeNeglectedFields.size === changingFields.size);
     if (willBeNeglectedFields.size === changingFields.size) {
       markRemovable(each.id, finder);
       lastAffectedIndex = i;
@@ -188,41 +187,28 @@ const releaseNonusableSetters = (
 const getNeglectedFields = (
   myIndex: number,
   pipelines: WrappedPipeline[],
-  changingFields: Set<string>
+  changingFieldsOriginal: ReadonlySet<string>
 ): Set<string> => {
-  changingFields = new Set(changingFields);
+  const changingFields = new Set(changingFieldsOriginal);
   const neglectedFields = new Set<string>();
   for (let i = myIndex + 1; i < pipelines.length; ++i) {
-    const each = pipelines[i];
-    /* console.log(
-      each.pipeline,
-      each.IAmDependedOnFields,
-      each.IAmChangingFields
-    ); */
-    const recentlyNeglected = new Set<string>();
-    if (
-      each.IAmChangingFields &&
-      !each.IAmChangingFields.isChangingEveryField
-    ) {
-      for (const field of each.IAmChangingFields.fields) {
-        // TODO: what if has common path
-        if (changingFields.has(field)) {
-          neglectedFields.add(field);
-          recentlyNeglected.add(field);
-        }
-      }
+    const secondaryPipeline = pipelines[i];
+
+    let recentlyNeglected = new Set<string>();
+    if (secondaryPipeline.IAmChangingFields) {
+      ({ recentlyNeglected } = getNegligenceInfo(
+        changingFields,
+        secondaryPipeline.IAmChangingFields,
+        neglectedFields
+      ));
     }
-    if (each.IAmChangingFields && each.IAmChangingFields.isChangingEveryField) {
+
+    for (const field of secondaryPipeline.IAmDependedOnFields) {
       for (const myField of changingFields) {
-        if (!each.IAmChangingFields.except.has(myField)) {
-          neglectedFields.add(myField);
-          recentlyNeglected.add(myField);
+        if (isSubPathOf(field, myField) || isSubPathOf(myField, field)) {
+          neglectedFields.delete(myField);
+          changingFields.delete(myField);
         }
-      }
-    }
-    for (const field of each.IAmDependedOnFields) {
-      if (changingFields.has(field)) {
-        neglectedFields.delete(field);
       }
     }
 
@@ -232,6 +218,35 @@ const getNeglectedFields = (
     if (changingFields.size === 0) break;
   }
   return neglectedFields;
+};
+
+const getNegligenceInfo = (
+  myChangingFields: Set<string>,
+  secondaryChanging: ChangingFields,
+  neglectedFields = new Set<string>()
+) => {
+  const recentlyNeglected = new Set<string>();
+  if (secondaryChanging && !secondaryChanging.isChangingEveryField) {
+    for (const field of secondaryChanging.fields) {
+      for (const myField of myChangingFields) {
+        if (isSubPathOf(field, myField)) {
+          neglectedFields.add(myField);
+          recentlyNeglected.add(myField);
+        }
+      }
+    }
+  }
+  if (secondaryChanging && secondaryChanging.isChangingEveryField) {
+    for (const myField of myChangingFields) {
+      for (const field of secondaryChanging.except) {
+        if (!isSubPathOf(field, myField)) {
+          neglectedFields.add(myField);
+          recentlyNeglected.add(myField);
+        }
+      }
+    }
+  }
+  return { neglectedFields, recentlyNeglected };
 };
 
 const releaseCountlikeDependencies = (
@@ -268,6 +283,7 @@ const removeDependency = (from: number, to: number, finder: PipelineFinder) => {
 };
 
 const markRemovable = (id: number, finder: PipelineFinder) => {
+  console.trace("=========remove id=======", id);
   const me = finder[id];
   if (!me) return;
   for (const from of me.pipelineIdsDepenedOnMe) {
@@ -350,14 +366,16 @@ const areChangingSameThings = (
   ch1: WrappedPipeline["IAmChangingFields"],
   ch2: WrappedPipeline["IAmChangingFields"]
 ): boolean => {
-  // TODO: implement
   if (!ch1 || !ch2) return false;
   if (!ch1.isChangingEveryField) {
-    if (!ch2.isChangingEveryField) {
-      return haveCommonPath(ch1.fields, ch2.fields);
-    }
+    const { neglectedFields } = getNegligenceInfo(new Set(ch1.fields), ch2);
+    return neglectedFields.size > 0;
   }
-  return false;
+  if (!ch2.isChangingEveryField) {
+    const { neglectedFields } = getNegligenceInfo(new Set(ch2.fields), ch1);
+    return neglectedFields.size > 0;
+  }
+  return true;
 };
 
 export const deps = {

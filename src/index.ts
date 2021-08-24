@@ -538,29 +538,23 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
       : null;
     const modelRelations = this.getModelRelations(primaryModelName);
     const matchedRelations = modelRelations.find(each => {
-      console.log("x1");
       if (each.model1.name !== primaryModelName) return false;
-      console.log("x2");
       if (secondaryModelName && each.model2.name !== secondaryModelName) {
         return false;
       }
-      console.log("x3");
       if (
         foreignField &&
         normalizeQueryPath(each.model2.localField) !== normalizedForeignField
       ) {
         return false;
       }
-      console.log("x4");
       if (
         localField &&
         normalizeQueryPath(each.model1.localField) !== normalizedLocalField
       ) {
         return false;
       }
-      console.log("x5");
       if (!localField) {
-        console.log("x6");
         if (
           normalizeQueryPath(each.model1.field || each.model1.localField) !==
           normalizedField
@@ -568,10 +562,8 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
           return false;
         }
       }
-      console.log("x7");
       return true;
     });
-    console.log("matchedRelations", matchedRelations);
     if (!matchedRelations) return null;
     return matchedRelations.model1.name === primaryModelName
       ? matchedRelations

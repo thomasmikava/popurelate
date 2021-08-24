@@ -1,8 +1,12 @@
 import { Populeration, RelationOptions } from "..";
 
-export const addMongooseRelations = (db: Populeration<any, any>) => {
+export const addMongooseRelations = (
+  db: Populeration<any, any>,
+  options: { logger?: (...args: any[]) => void } = {}
+) => {
   const models = db.getModelsByEngine("mongoose");
   const relations = getMongooseModelRelations(models);
+  if (options.logger) options.logger(relations);
   for (const modelName in relations) {
     const relation = relations[modelName];
     db.addRelation(modelName, relation);
