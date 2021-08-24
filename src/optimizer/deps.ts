@@ -1,6 +1,8 @@
 import { OptimizerHelper } from ".";
 import { Pipeline } from "..";
 import { isSubPathOf } from "../path";
+import { FINAL_DOC_ID } from "./const";
+import { haveCommonPath } from "./recompose";
 import { PipelineFinder, WrappedPipeline } from "./types";
 
 const addDependenciesIf = (
@@ -23,20 +25,48 @@ const addDependenciesIf = (
   }
 };
 
-const addFieldRelations = (
+const updateDependency = (
   pipelines: WrappedPipeline[],
+  index: number,
   finder: PipelineFinder
 ) => {
-  for (let i = 0; i < pipelines.length; i++) {
-    const primary = pipelines[i];
-    for (let j = i + 1; j < pipelines.length; j++) {
-      const secondary = pipelines[j];
-      if (isDependedOnMe(primary, secondary)) {
-        // TODO: what if we set the same things?
-        pairDependence(primary.id, secondary.id, finder);
-        break;
-      }
+  const primary = pipelines[index];
+  if (primary.removable) return;
+  for (let j = index + 1; j < pipelines.length; j++) {
+    const secondary = pipelines[j];
+    if (secondary.removable) continue;
+    if (isDependedOnMe(primary, secondary)) {
+      pairDependence(primary.id, secondary.id, finder);
+      break;
     }
+  }
+};
+
+const updatePredefinedDependency = (
+  wrappedPipeliles: WrappedPipeline[],
+  i: number,
+  finder: PipelineFinder,
+  helper: OptimizerHelper
+) => {
+  const is = helper.pipelineIs;
+  const each = wrappedPipeliles[i];
+  if (is.changingCountOrOrder(each.pipeline)) {
+    addDependenciesIf(
+      each,
+      i + 1,
+      wrappedPipeliles,
+      finder,
+      is.orderAndCountImportant
+    );
+  }
+  if (is.orderAndCountImportant(each.pipeline)) {
+    addDependenciesIf(
+      each,
+      i + 1,
+      wrappedPipeliles,
+      finder,
+      is.changingCountOrOrder
+    );
   }
 };
 
@@ -84,8 +114,8 @@ const releaseDependencies = (
   pipelines: WrappedPipeline[],
   finder: PipelineFinder,
   helper: OptimizerHelper
-): boolean => {
-  let hasAffected = false;
+): number => {
+  let lastAffectedIndex = -1;
   const is = helper.pipelineIs;
   for (let i = 0; i < pipelines.length; ++i) {
     const each = pipelines[i];
@@ -97,27 +127,30 @@ const releaseDependencies = (
         finder,
         helper
       );
-      if (changed) hasAffected = true;
+      if (changed) lastAffectedIndex = i;
     }
     if (is.skip(each.pipeline) && each.pipeline.skip === 0) {
       markRemovable(each.id, finder);
-      hasAffected = true;
+      lastAffectedIndex = i;
     }
   }
 
-  if (releaseNonusableSetters(pipelines, finder, helper)) {
-    hasAffected = true;
+  const index = releaseNonusableSetters(pipelines, finder, helper);
+  lastAffectedIndex = Math.max(lastAffectedIndex, index);
+
+  if (lastAffectedIndex !== -1) {
+    recalculateDependencies(pipelines, finder, helper);
   }
 
-  return hasAffected;
+  return lastAffectedIndex;
 };
 
 const releaseNonusableSetters = (
   pipelines: WrappedPipeline[],
   finder: PipelineFinder,
   helper: OptimizerHelper
-) => {
-  let hasAffected = false;
+): number => {
+  let lastAffectedIndex = -1;
   const is = helper.pipelineIs;
   for (let i = 0; i < pipelines.length; ++i) {
     const each = pipelines[i];
@@ -145,11 +178,11 @@ const releaseNonusableSetters = (
     // console.log("delete", willBeNeglectedFields.size === changingFields.size);
     if (willBeNeglectedFields.size === changingFields.size) {
       markRemovable(each.id, finder);
-      hasAffected = true;
+      lastAffectedIndex = i;
     }
     // console.log("\n\n\n\n");
   }
-  return hasAffected;
+  return lastAffectedIndex;
 };
 
 const getNeglectedFields = (
@@ -172,6 +205,7 @@ const getNeglectedFields = (
       !each.IAmChangingFields.isChangingEveryField
     ) {
       for (const field of each.IAmChangingFields.fields) {
+        // TODO: what if has common path
         if (changingFields.has(field)) {
           neglectedFields.add(field);
           recentlyNeglected.add(field);
@@ -189,7 +223,6 @@ const getNeglectedFields = (
     for (const field of each.IAmDependedOnFields) {
       if (changingFields.has(field)) {
         neglectedFields.delete(field);
-        recentlyNeglected.add(field);
       }
     }
 
@@ -244,33 +277,39 @@ const markRemovable = (id: number, finder: PipelineFinder) => {
 
 const isMarkedRemovable = (pipeline: WrappedPipeline) => !!pipeline.removable;
 
-const addPredefinedRelations = (
+const addRelations = (
   wrappedPipeliles: WrappedPipeline[],
   finder: PipelineFinder,
   helper: OptimizerHelper
 ) => {
-  const is = helper.pipelineIs;
+  for (let i = 0; i < wrappedPipeliles.length; ++i) {
+    updatePredefinedDependency(wrappedPipeliles, i, finder, helper);
+    updateDependency(wrappedPipeliles, i, finder);
+  }
+};
+
+const resetDependencies = (wrappedPipeliles: WrappedPipeline[]) => {
+  // requires all pipelines. Don not pass slice of it
   for (let i = 0; i < wrappedPipeliles.length; ++i) {
     const each = wrappedPipeliles[i];
-    if (is.changingCountOrOrder(each.pipeline)) {
-      addDependenciesIf(
-        each,
-        i + 1,
-        wrappedPipeliles,
-        finder,
-        is.orderAndCountImportant
-      );
-    }
-    if (is.orderAndCountImportant(each.pipeline)) {
-      addDependenciesIf(
-        each,
-        i + 1,
-        wrappedPipeliles,
-        finder,
-        is.changingCountOrOrder
-      );
+    const isFinalDocDepened = each.pipelineIdsDepenedOnMe.has(FINAL_DOC_ID);
+    each.pipelineIdsDepenedOnMe = new Set();
+    each.IAmDependedOnPipelineIds = new Set();
+    each.removable = true;
+    if (isFinalDocDepened) {
+      each.removable = false;
+      each.pipelineIdsDepenedOnMe.add(FINAL_DOC_ID);
     }
   }
+};
+
+const recalculateDependencies = (
+  wrappedPipeliles: WrappedPipeline[],
+  finder: PipelineFinder,
+  helper: OptimizerHelper
+) => {
+  resetDependencies(wrappedPipeliles);
+  addRelations(wrappedPipeliles, finder, helper);
 };
 
 const transferDependences = (
@@ -292,9 +331,39 @@ const transferDependences = (
   }
 };
 
+const markSameSetters = (pipelines: WrappedPipeline[]) => {
+  for (let i = 0; i < pipelines.length; ++i) {
+    const first = pipelines[i];
+    for (let j = i + 1; j < pipelines.length; ++j) {
+      const second = pipelines[j];
+      if (
+        areChangingSameThings(first.IAmChangingFields, second.IAmChangingFields)
+      ) {
+        first.sameSettersWith.add(second.id);
+        second.sameSettersWith.add(first.id);
+      }
+    }
+  }
+};
+
+const areChangingSameThings = (
+  ch1: WrappedPipeline["IAmChangingFields"],
+  ch2: WrappedPipeline["IAmChangingFields"]
+): boolean => {
+  // TODO: implement
+  if (!ch1 || !ch2) return false;
+  if (!ch1.isChangingEveryField) {
+    if (!ch2.isChangingEveryField) {
+      return haveCommonPath(ch1.fields, ch2.fields);
+    }
+  }
+  return false;
+};
+
 export const deps = {
-  addFieldRelations,
   releaseDependencies,
-  addPredefinedRelations,
+  addRelations,
   transferDependences,
+  markSameSetters,
+  recalculateDependencies,
 };

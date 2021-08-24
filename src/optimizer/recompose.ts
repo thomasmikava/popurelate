@@ -1,3 +1,5 @@
+/* eslint-disable sonarjs/cognitive-complexity */
+/* eslint-disable max-params */
 /* eslint-disable max-lines-per-function */
 import {
   AddFieldsPipeline,
@@ -6,29 +8,43 @@ import {
   QueryPipeline,
 } from "..";
 import { QueryBuilderError } from "../errors";
-import { defaultPipelineIs } from "./is";
-import { PipelineFinder, WrappedPipeline } from "./types";
-import { deps } from "./deps";
 import { isSubPathOf } from "../path";
+import { deps } from "./deps";
+import { getPipelineType } from "./is";
+import { PipelineFinder, WrappedPipeline } from "./types";
 
-const canBeMerged = (
+export function canBeMerged(
   pipeline1: WrappedPipeline,
   pipeline2: WrappedPipeline,
-  finder: PipelineFinder
-): WrappedPipeline | null => {
-  const type1 = getType(pipeline1.pipeline);
-  const type2 = getType(pipeline2.pipeline);
-  if (pipeline1.removable || pipeline2.removable) return null;
-  if (type1 === null || type2 === null) return null;
-  if (!pipeline1.useOptimizer || !pipeline2.useOptimizer) return null;
-  if (type1 !== type2) return null;
+  finder: PipelineFinder,
+  actuallyMerge?: false
+): boolean;
+export function canBeMerged(
+  pipeline1: WrappedPipeline,
+  pipeline2: WrappedPipeline,
+  finder: PipelineFinder,
+  actuallyMerge: true
+): WrappedPipeline | null;
+export function canBeMerged(
+  pipeline1: WrappedPipeline,
+  pipeline2: WrappedPipeline,
+  finder: PipelineFinder,
+  actuallyMerge?: boolean
+): boolean | WrappedPipeline | null {
+  const nah = actuallyMerge ? null : false;
+  const type1 = getPipelineType(pipeline1.pipeline);
+  const type2 = getPipelineType(pipeline2.pipeline);
+  if (pipeline1.removable || pipeline2.removable) return nah;
+  if (type1 === null || type2 === null) return nah;
+  if (!pipeline1.useOptimizer || !pipeline2.useOptimizer) return nah;
+  if (type1 !== type2) return nah;
   if (
     pipeline1.IAmChangingFields &&
     pipeline2.IAmChangingFields &&
     pipeline1.IAmChangingFields.isChangingEveryField !==
       pipeline2.IAmChangingFields.isChangingEveryField
   ) {
-    return null;
+    return nah;
   }
   if (type1 === "query") {
     if (
@@ -37,8 +53,9 @@ const canBeMerged = (
         pipeline2.IAmDependedOnFields
       )
     ) {
-      return null;
+      return nah;
     }
+    if (!actuallyMerge) return true;
     return mergeWrapped(
       pipeline1,
       pipeline2,
@@ -54,7 +71,7 @@ const canBeMerged = (
       pipeline1.IAmChangingFields?.isChangingEveryField ||
       pipeline2.IAmChangingFields?.isChangingEveryField
     ) {
-      return null;
+      return nah;
     }
     if (
       haveCommonPath(
@@ -62,9 +79,10 @@ const canBeMerged = (
         pipeline2.IAmChangingFields?.fields || new Set()
       )
     ) {
-      return null;
+      return nah;
     }
     // strict check
+    if (!actuallyMerge) return true;
     return mergeWrapped(
       pipeline1,
       pipeline2,
@@ -78,11 +96,8 @@ const canBeMerged = (
   if (type1 === "populate") {
     const pip1 = pipeline1.pipeline as PopulatePipeline;
     const pip2 = pipeline2.pipeline as PopulatePipeline;
-    if (
-      pip1.field === pip2.field &&
-      (isDirectParentOfPopulate(pip1, pip2) ||
-        isDirectParentOfPopulate(pip2, pip1))
-    ) {
+    if (pip1.field === pip2.field && canPopulatesBeMErged(pip1, pip2)) {
+      if (!actuallyMerge) return true;
       return mergeWrapped(
         pipeline1,
         pipeline2,
@@ -93,9 +108,61 @@ const canBeMerged = (
         )
       );
     }
-    return null;
+    return nah;
   }
-  return null;
+  return nah;
+}
+
+const canPopulatesBeMErged = (
+  p1: PopulatePipeline,
+  p2: PopulatePipeline
+): boolean => {
+  if (!arePopulationsSameWithoucChildren(p1, p2)) {
+    return false;
+  }
+  const children1 = p1.populate.children;
+  const children2 = p2.populate.children;
+  if (children1 && children2) {
+    const keys = new Set(Object.keys(children1).concat(Object.keys(children2)));
+    for (const key of keys) {
+      const child1 = children1[key];
+      const child2 = children2[key];
+      if (!child1 || !child2) continue;
+      if (!canPopulatesBeMErged(child1, child2)) return false;
+    }
+  }
+  return true;
+};
+
+const arePopulationsSameWithoucChildren = (
+  p1: PopulatePipeline,
+  p2: PopulatePipeline
+) => {
+  if (!haveSameValues(p1, p2, ["field", "parentIdField", "myIdField"])) {
+    return false;
+  }
+  if (
+    !haveSameValues(p1.populate, p2.populate, [
+      "modelName",
+      "localField",
+      "foreignField",
+      "globalPathPrefix",
+      "localPathPrefix",
+      "matchesMany",
+      "required",
+      "through",
+    ])
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const haveSameValues = <T>(obj1: T, obj2: T, keys: (keyof T)[]): boolean => {
+  for (const key of keys) {
+    if (obj1[key] !== obj2[key]) return false;
+  }
+  return true;
 };
 
 export const recomposePipelines = (
@@ -116,7 +183,7 @@ export const recomposePipelines = (
 
     const p1 = pipelines[firstIndex];
     const p2 = pipelines[secondIndex];
-    const mergable = canBeMerged(p1, p2, finder);
+    const mergable = canBeMerged(p1, p2, finder, true);
     if (!mergable) continue;
     pipelines.splice(secondIndex, 1, mergable);
     pipelines.splice(firstIndex, 1);
@@ -132,7 +199,7 @@ const haveCommonElement = (set1: Set<any>, set2: Set<any>) => {
   return false;
 };
 
-const haveCommonPath = (set1: Set<any>, set2: Set<any>) => {
+export const haveCommonPath = (set1: Set<any>, set2: Set<any>) => {
   for (const field1 of set1) {
     for (const field2 of set2) {
       if (isSubPathOf(field1, field2) || isSubPathOf(field2, field1)) {
@@ -141,15 +208,6 @@ const haveCommonPath = (set1: Set<any>, set2: Set<any>) => {
     }
   }
   return false;
-};
-
-const getType = (pipeline: Pipeline) => {
-  if (defaultPipelineIs.query(pipeline)) return "query" as const;
-  if (defaultPipelineIs.project(pipeline)) return "project" as const;
-  if (defaultPipelineIs.addFields(pipeline)) return "addFields" as const;
-  if (defaultPipelineIs.sort(pipeline)) return "sort" as const;
-  if (defaultPipelineIs.populate(pipeline)) return "populate" as const;
-  return null;
 };
 
 const isDirectParentOfPopulate = (

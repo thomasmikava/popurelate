@@ -2,13 +2,15 @@
 /* eslint-disable max-params */
 // import { inspect } from "util";
 import { AggregatorOptions, Pipeline } from "..";
+import { FINAL_DOC_ID } from "./const";
 import { decomposePipelines } from "./decompose";
 import { deps } from "./deps";
 import { defaultPipelineIs, PipeLineIsHelper } from "./is";
 import { recomposePipelines } from "./recompose";
+import { reorderPipelines } from "./reorder";
 import { Counter, PipelineFinder, WrappedPipeline } from "./types";
 
-const { addPredefinedRelations, addFieldRelations, releaseDependencies } = deps;
+const { recalculateDependencies, releaseDependencies, markSameSetters } = deps;
 
 // export const fullyLog = (...args) =>
 //   console.log(...args.map(obj => inspect(obj, false, null, true)));
@@ -45,32 +47,6 @@ export const createDefaultOptimizer = (helpers: OptimizerHelperArg) => (
   return { ...options, pipelines: optimizedPipelines };
 };
 
-const FINAL_DOC_ID = -2;
-
-const createCounter = (minCount = 0): Counter => {
-  let minId = minCount;
-  return {
-    getId: () => {
-      minId++;
-      return minId;
-    },
-  };
-};
-
-const hasExplicitelyTurnedOptimizer = (pipelines: Pipeline[]) => {
-  for (const pipeline of pipelines) {
-    if (pipeline.invisible === true && pipeline.optimizer === true) {
-      if (typeof pipeline.useOptimizer === "boolean") return true;
-    } else if (
-      pipeline.withCount &&
-      hasExplicitelyTurnedOptimizer(pipeline.docsPipelines)
-    ) {
-      return true;
-    }
-  }
-  return false;
-};
-
 export const wrapPipeline = (
   pipeline: Pipeline,
   counter: Counter
@@ -83,8 +59,24 @@ export const wrapPipeline = (
   IAmDependedOnPipelineIds: new Set(),
   pipelineIdsDepenedOnMe: new Set([FINAL_DOC_ID]),
   invisible: !!pipeline.invisible,
+  sameSettersWith: new Set(),
   pipeline,
 });
+
+export const copyChangingFields = (
+  IAmChangingFields: WrappedPipeline["IAmChangingFields"]
+): WrappedPipeline["IAmChangingFields"] => {
+  if (!IAmChangingFields) return IAmChangingFields;
+  const copied: NonNullable<WrappedPipeline["IAmChangingFields"]> = {
+    ...IAmChangingFields,
+  };
+  if (copied.isChangingEveryField) {
+    copied.except = new Set(copied.except);
+  } else {
+    copied.fields = new Set(copied.fields);
+  }
+  return copied;
+};
 
 const getOptimizedPipelines = (
   useOptimizer: boolean,
@@ -95,39 +87,46 @@ const getOptimizedPipelines = (
   const transformedPipelines = pipelines.map(
     (pipeline): WrappedPipeline => wrapPipeline(pipeline, counter)
   );
+
   normalizeUseOptimizers(useOptimizer, transformedPipelines);
-  if (
-    !transformedPipelines.some(e => e.useOptimizer || e.partiallyUseOptimizer)
-  ) {
-    return pipelines;
-  }
+
+  const usesOptimizer = transformedPipelines.some(
+    e => e.useOptimizer || e.partiallyUseOptimizer
+  );
+  if (!usesOptimizer) pipelines;
 
   decomposePipelines(transformedPipelines, counter, helper);
 
   const finder = getFinder(transformedPipelines);
   setFields(transformedPipelines, helper);
-  addPredefinedRelations(transformedPipelines, finder, helper);
-  addFieldRelations(transformedPipelines, finder);
+  recalculateDependencies(transformedPipelines, finder, helper);
+  markSameSetters(transformedPipelines);
 
-  let affected = true;
-  while (affected) {
-    affected = releaseDependencies(transformedPipelines, finder, helper);
-    if (!affected) break;
-    // TODO: reorder
-  }
+  reorderAndMarkRemovable(transformedPipelines, finder, helper);
 
   removeRemovablePipelines(transformedPipelines, helper);
 
   // fullyLog(transformedPipelines.map(e => e.pipeline));
   recomposePipelines(transformedPipelines, finder); //, counter, helper, finder);
 
-  logPipelines(transformedPipelines);
-  // TODO: recompose populate pipeline
-  // TODO: recompose filter
-  // TODO: recompose addFields
+  // logPipelines(transformedPipelines);
 
+  optimizeSubPipelines(transformedPipelines, counter, helper);
+
+  return transformedPipelines.map(e => e.pipeline);
+};
+
+const optimizeSubPipelines = (
+  transformedPipelines: WrappedPipeline[],
+  counter: Counter,
+  helper: OptimizerHelper
+) => {
   for (const each of transformedPipelines) {
-    if (!each.removable && helper.pipelineIs.withCount(each.pipeline)) {
+    if (
+      !each.removable &&
+      helper.pipelineIs.withCount(each.pipeline) &&
+      (each.useOptimizer || each.partiallyUseOptimizer)
+    ) {
       each.pipeline = { ...each.pipeline };
       each.pipeline.docsPipelines = getOptimizedPipelines(
         each.useOptimizer!,
@@ -137,20 +136,50 @@ const getOptimizedPipelines = (
       );
     }
   }
+};
 
-  return transformedPipelines.map(e => e.pipeline);
+const reorderAndMarkRemovable = (
+  transformedPipelines: WrappedPipeline[],
+  finder: PipelineFinder,
+  helper: OptimizerHelper
+) => {
+  let lastAffectedIndex = transformedPipelines.length;
+  let hasRunOnce = false;
+  let step = 0;
+  const maxSteps = transformedPipelines.length * 2;
+  while (lastAffectedIndex !== -1 && step <= maxSteps) {
+    step++;
+    lastAffectedIndex = releaseDependencies(
+      transformedPipelines,
+      finder,
+      helper
+    );
+    lastAffectedIndex = reorderPipelines(
+      transformedPipelines,
+      hasRunOnce ? lastAffectedIndex : transformedPipelines.length,
+      finder,
+      helper
+    );
+    hasRunOnce = true;
+    if (1 > 2) break;
+  }
+  if (step > maxSteps) {
+    console.warn(
+      "QueryBuilder optimizer: Too much steps while reordering pipelines"
+    );
+  }
 };
 
 const logPipelines = (wrappedPipelines: WrappedPipeline[]) => {
-  /* wrappedPipelines.forEach(e =>
-    fullyLog(
-      e,
-      "IAmDependedOnPipelineIds",
-      e.IAmDependedOnPipelineIds,
-      "pipelineIdsDepenedOnMe",
-      e.pipelineIdsDepenedOnMe
-    )
-  ); */
+  // wrappedPipelines.forEach(e =>
+  //   fullyLog(
+  //     e,
+  //     "IAmDependedOnPipelineIds",
+  //     e.IAmDependedOnPipelineIds,
+  //     "pipelineIdsDepenedOnMe",
+  //     e.pipelineIdsDepenedOnMe
+  //   )
+  // );
 };
 
 const getFinder = (pipelines: WrappedPipeline[]): PipelineFinder => {
@@ -241,6 +270,30 @@ const removeRemovablePipelines = (
     }
   }
   mutationFilter(pipeliles, each => !each.removable);
+};
+
+const createCounter = (minCount = 0): Counter => {
+  let minId = minCount;
+  return {
+    getId: () => {
+      minId++;
+      return minId;
+    },
+  };
+};
+
+const hasExplicitelyTurnedOptimizer = (pipelines: Pipeline[]) => {
+  for (const pipeline of pipelines) {
+    if (pipeline.invisible === true && pipeline.optimizer === true) {
+      if (typeof pipeline.useOptimizer === "boolean") return true;
+    } else if (
+      pipeline.withCount &&
+      hasExplicitelyTurnedOptimizer(pipeline.docsPipelines)
+    ) {
+      return true;
+    }
+  }
+  return false;
 };
 
 function mutationFilter<T>(arr: T[], cb: (el: T) => boolean) {

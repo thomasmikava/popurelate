@@ -107,3 +107,32 @@ export class PipeLineIsHelper {
 }
 
 export const defaultPipelineIs = new PipeLineIsHelper();
+
+export type PipelineTypes =
+  | "query"
+  | "project"
+  | "addFields"
+  | "sort"
+  | "populate"
+  | "limit"
+  | "skip"
+  | "withCount"
+  | "count"
+  | "rawPipeline";
+
+export const getPipelineType = (
+  pipeline: Pipeline,
+  is: PipeLineIsHelper = defaultPipelineIs
+): PipelineTypes | null => {
+  if (is.query(pipeline)) return "query";
+  if (is.project(pipeline)) return "project";
+  if (is.addFields(pipeline)) return "addFields";
+  if (is.sort(pipeline)) return "sort";
+  if (is.populate(pipeline)) return "populate";
+  if (is.limit(pipeline)) return "limit";
+  if (is.skip(pipeline)) return "skip";
+  if (is.withCount(pipeline)) return "withCount";
+  if (is.count(pipeline)) return "count";
+  if (is.rawPipeline(pipeline)) return "rawPipeline";
+  return null;
+};

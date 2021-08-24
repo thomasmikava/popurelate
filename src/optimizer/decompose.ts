@@ -1,5 +1,5 @@
 /* eslint-disable max-params */
-import { OptimizerHelper, wrapPipeline } from ".";
+import { copyChangingFields, OptimizerHelper, wrapPipeline } from ".";
 import {
   Pipeline,
   QueryPipeline,
@@ -39,6 +39,9 @@ export const decomposePipelines = (
           cannotBeRemoved: each.cannotBeRemoved,
           invisible: each.invisible,
           pipeline: e,
+          IAmDependedOnFields: new Set(each.IAmDependedOnFields),
+          IAmChangingFields: copyChangingFields(each.IAmChangingFields),
+          sameSettersWith: new Set(each.sameSettersWith),
         })
       )
     );

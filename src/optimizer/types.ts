@@ -16,6 +16,7 @@ export interface WrappedPipeline {
   removable?: boolean;
   invisible: boolean;
   pipeline: Pipeline;
+  sameSettersWith: Set<number>;
 }
 
 export interface Counter {
