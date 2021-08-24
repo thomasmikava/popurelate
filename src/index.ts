@@ -18,7 +18,10 @@ interface DefaultDb {
   modelName: string;
 }
 
-interface Populeration<Engines extends DefaultEngines, Db extends DefaultDb> {
+export interface Populeration<
+  Engines extends DefaultEngines,
+  Db extends DefaultDb
+> {
   addEngine: AddEngineFn<Engines, Db>;
   addDb: AddDbFn<Engines, Db>;
   addRelation: AddRelationsFn<Engines, Db>;
@@ -103,9 +106,6 @@ interface ModelRelation<Db extends DefaultDb> {
   name: Db["modelName"];
   localField: string;
   matchesMany?: boolean;
-  /**
-   * @deprecated not supported yet
-   */
   field?: string;
   required: boolean;
 }
@@ -222,7 +222,9 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     const model1Info = this.getModelInfoByName(model);
     for (const field in relationOptions) {
       const rawRelationInfo = relationOptions[field];
-      let relation: RelationOptions<Db>;
+      let relation: Omit<RelationOptions<Db>, "matchesMany"> & {
+        matchesMany?: boolean;
+      };
       if (typeof rawRelationInfo !== "object") {
         relation = {
           model: rawRelationInfo,
@@ -247,7 +249,8 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
       const normalizedRelation: NormalizedRelationInfo<Db> = {
         model1: {
           name: model,
-          localField: field,
+          localField: relation.localField || field,
+          field: field,
           matchesMany: relation.matchesMany,
           required: isRequired,
         },
@@ -259,6 +262,11 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
         },
         through: relation.through,
       };
+      if (
+        normalizedRelation.model1.field === normalizedRelation.model1.localField
+      ) {
+        delete normalizedRelation.model1.field;
+      }
       model1Info.forwardRelations.push(normalizedRelation);
       model2Info.backwardRelations.push(normalizedRelation);
       if (normalizedRelation.through !== undefined) {
@@ -510,33 +518,60 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
 
   private getModelRelations = (modelName: Db["modelName"]) => {
     const modelInfo = this.getModelInfoByName(modelName);
-    return modelInfo.backwardRelations.concat(modelInfo.forwardRelations);
+    return modelInfo.forwardRelations;
+    // return modelInfo.forwardRelations.concat(modelInfo.backwardRelations);
   };
 
   private getMatchedRelation = (
     primaryModelName: Db["modelName"],
+    field: string,
+    localField: string | undefined,
     secondaryModelName: Db["modelName"] | null,
-    localField: string
+    foreignField: string | undefined
   ): NormalizedRelationInfo<Db> | null => {
-    const normalizedLocalField = normalizeQueryPath(localField);
+    const normalizedLocalField = localField
+      ? normalizeQueryPath(localField)
+      : null;
+    const normalizedField = normalizeQueryPath(field);
+    const normalizedForeignField = foreignField
+      ? normalizeQueryPath(foreignField)
+      : null;
     const modelRelations = this.getModelRelations(primaryModelName);
     const matchedRelations = modelRelations.find(each => {
-      if (
-        each.model1.name === primaryModelName &&
-        normalizeQueryPath(each.model1.localField) === normalizedLocalField &&
-        (!secondaryModelName || each.model2.name === secondaryModelName)
-      ) {
-        return true;
+      console.log("x1");
+      if (each.model1.name !== primaryModelName) return false;
+      console.log("x2");
+      if (secondaryModelName && each.model2.name !== secondaryModelName) {
+        return false;
       }
+      console.log("x3");
       if (
-        each.model2.name === primaryModelName &&
-        normalizeQueryPath(each.model2.localField) === normalizedLocalField &&
-        (!secondaryModelName || each.model1.name === secondaryModelName)
+        foreignField &&
+        normalizeQueryPath(each.model2.localField) !== normalizedForeignField
       ) {
-        return true;
+        return false;
       }
-      return false;
+      console.log("x4");
+      if (
+        localField &&
+        normalizeQueryPath(each.model1.localField) !== normalizedLocalField
+      ) {
+        return false;
+      }
+      console.log("x5");
+      if (!localField) {
+        console.log("x6");
+        if (
+          normalizeQueryPath(each.model1.field || each.model1.localField) !==
+          normalizedField
+        ) {
+          return false;
+        }
+      }
+      console.log("x7");
+      return true;
     });
+    console.log("matchedRelations", matchedRelations);
     if (!matchedRelations) return null;
     return matchedRelations.model1.name === primaryModelName
       ? matchedRelations
@@ -594,8 +629,10 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
 
     const relation = this.getMatchedRelation(
       modelName,
+      field,
+      manual.localField,
       manual.model || null,
-      manual.localField || field
+      manual.foreignField
     );
 
     let foreignField = "";
@@ -614,7 +651,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
     }
     if (!foreignField) {
       throw new QueryBuilderError(
-        `Cannot find foreign field while populating ${field} on model ${modelName.toString()}`
+        `Cannot find foreign field while populating \`${field}\` field on model ${modelName.toString()}`
       );
     }
 
@@ -948,9 +985,9 @@ export type FilledPopulations<Db extends DefaultDb = DefaultDb> = Record<
   FilledPopulateOptions<Db>
 >;
 
-interface RelationOptions<Db extends DefaultDb> {
+export interface RelationOptions<Db extends DefaultDb> {
   required?: boolean;
-  matchesMany?: boolean;
+  matchesMany: boolean;
   model: Db["modelName"];
   /**
    * @deprecated Not supported yet
@@ -984,16 +1021,14 @@ export interface QueryBuilder<
   where: (query?: FilterQuery) => QueryBuilder<Doc, ModelName, Engines, Db>;
   project: (project: Project) => QueryBuilder<Doc, ModelName, Engines, Db>;
   populate: {
-    (field: string): QueryBuilder<Doc, ModelName, Engines, Db> & Promise<Doc>;
+    (field: string): QueryBuilder<Doc, ModelName, Engines, Db>;
     (field: string, options: PopulateOptions<Db>): QueryBuilder<
       Doc,
       ModelName,
       Engines,
       Db
-    > &
-      Promise<Doc>;
-    (bulkPopulate: Populate<Db>): QueryBuilder<Doc, ModelName, Engines, Db> &
-      Promise<Doc>;
+    >;
+    (bulkPopulate: Populate<Db>): QueryBuilder<Doc, ModelName, Engines, Db>;
   };
   sort: (sort?: SortQuery) => QueryBuilder<Doc, ModelName, Engines, Db>;
   limit: (number?: number) => QueryBuilder<Doc, ModelName, Engines, Db>;

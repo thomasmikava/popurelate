@@ -1,7 +1,15 @@
+/* eslint-disable max-lines-per-function */
 import { createDefaultOptimizer } from "../optimizer";
 import { joinQueryPath, normalizeQueryPath } from "../path";
-import { EngineInfo, WithCountPipeline, Pipeline, PopulatePipeline } from "..";
+import {
+  EngineInfo,
+  WithCountPipeline,
+  Pipeline,
+  PopulatePipeline,
+  PopulatePipelineOptions,
+} from "..";
 import { mongoOptimizationHelper } from "./optimizer";
+import { addMongooseRelations } from "./relations";
 
 const createMongooLikeEngine = <EngineName extends string>({
   getAggregateFn,
@@ -76,7 +84,7 @@ const mongooseEngine = ({
   debugger: debuggerFn,
 }: { useOptimizer?: boolean; debugger?: (args: any) => void } = {}) =>
   createMongooLikeEngine({
-    name: "mongoose",
+    name: "mongoose", // after changing name, change relations engine name too
     getAggregateFn: mongooseAggregator,
     transformModelName: ({ model }) => model.collection.collectionName,
     useOptimizer,
@@ -87,6 +95,8 @@ export const defaultEngines = {
   mongodb: mongodbEngine,
   mongoose: mongooseEngine,
 };
+
+export { addMongooseRelations };
 
 type RawPipeline = any;
 
@@ -177,15 +187,16 @@ const populatePipeline = (
     joinQueryPath(populate.globalPathPrefix, field)
   );
   if (!populate.alreadyPopulated) {
+    const isForeignArray = populate.foreignField.indexOf("[]") !== -1;
+    const isLocalArray =
+      populate.localField.lastIndexOf("[]") === populate.localField.length - 2;
     realPipelines.push({
-      $lookup: {
-        from: populate.transformedModelName,
-        localField: normalizeQueryPath(
-          joinQueryPath(populate.globalPathPrefix, populate.localField)
-        ),
-        foreignField: populate.foreignField,
-        as: asPath,
-      },
+      $lookup: getLookupPipeline({
+        isLocalArray,
+        isForeignArray,
+        populate,
+        asPath,
+      }),
     });
   }
   if (!populate.matchesMany || populate.children) {
@@ -193,8 +204,8 @@ const populatePipeline = (
       $unwind: {
         path: "$" + asPath,
         preserveNullAndEmptyArrays: populate.matchesMany
-          ? false
-          : populate.required,
+          ? true
+          : !populate.required,
       },
     });
   }
@@ -265,6 +276,117 @@ const populatePipeline = (
     );
   }
   return realPipelines;
+};
+
+const getLookupPipeline = ({
+  isLocalArray,
+  isForeignArray,
+  populate,
+  asPath,
+}: {
+  isForeignArray: boolean;
+  isLocalArray: boolean;
+  populate: PopulatePipelineOptions;
+  asPath: string;
+}) => {
+  const localField = normalizeQueryPath(
+    joinQueryPath(populate.globalPathPrefix, populate.localField)
+  );
+  const foreignField = normalizeQueryPath(populate.foreignField);
+
+  const useSimplePipeline = !isForeignArray;
+
+  if (useSimplePipeline) {
+    return {
+      from: populate.transformedModelName,
+      localField,
+      foreignField,
+      as: asPath,
+    };
+  }
+
+  if (!isLocalArray && !isForeignArray) {
+    return {
+      from: populate.transformedModelName,
+      let: {
+        x0: "$" + localField,
+      },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $eq: ["$$x0", "$" + foreignField],
+            },
+          },
+        },
+      ],
+      as: asPath,
+    };
+  }
+
+  if (!isLocalArray && isForeignArray) {
+    return {
+      from: populate.transformedModelName,
+      let: {
+        x0: "$" + localField,
+      },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $in: ["$$x0", { $ifNull: ["$" + foreignField, []] }],
+            },
+          },
+        },
+      ],
+      as: asPath,
+    };
+  }
+
+  if (isLocalArray && !isForeignArray) {
+    return {
+      from: "users",
+      let: {
+        x0: "$" + localField,
+      },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $in: ["$" + foreignField, "$$x0"],
+            },
+          },
+        },
+      ],
+      as: asPath,
+    };
+  }
+
+  if (isLocalArray && isForeignArray) {
+    return {
+      from: populate.transformedModelName,
+      let: {
+        x0: "$" + localField,
+      },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $gt: [
+                {
+                  $size: {
+                    $ifNull: [{ $setUnion: ["$" + foreignField, "$$x0"] }, []],
+                  },
+                },
+                0,
+              ],
+            },
+          },
+        },
+      ],
+      as: asPath,
+    };
+  }
 };
 
 const getGroupId = (parentInfo: ParentInfo[]): unknown => {
