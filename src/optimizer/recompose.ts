@@ -51,6 +51,10 @@ export function canBeMerged(
       haveCommonElement(
         pipeline1.IAmDependedOnFields,
         pipeline2.IAmDependedOnFields
+      ) ||
+      !canQueriesBeMerged(
+        pipeline1.pipeline as QueryPipeline,
+        pipeline2.pipeline as QueryPipeline
       )
     ) {
       return nah;
@@ -112,6 +116,13 @@ export function canBeMerged(
   }
   return nah;
 }
+
+const canQueriesBeMerged = (p1: QueryPipeline, p2: QueryPipeline) => {
+  return !haveCommonElement(
+    Object.keys(p1.query),
+    new Set(Object.keys(p2.query))
+  );
+};
 
 const canPopulatesBeMErged = (
   p1: PopulatePipeline,
@@ -192,7 +203,7 @@ export const recomposePipelines = (
   return pipelines;
 };
 
-const haveCommonElement = (set1: Set<any>, set2: Set<any>) => {
+const haveCommonElement = (set1: Iterable<any>, set2: Set<any>) => {
   for (const el of set1) {
     if (set2.has(el)) return true;
   }
