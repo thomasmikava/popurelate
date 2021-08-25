@@ -89,7 +89,7 @@ interface AddEngineFn<Engines extends DefaultEngines, Db extends DefaultDb> {
 }
 
 interface DbInfo<Engine, ModelNames extends string> {
-  engline: Engine;
+  engine: Engine;
   db: any;
   idField: string;
   defaultRequired: boolean;
@@ -190,14 +190,14 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
   };
 
   addDb: Populeration<Engines, Db>["addDb"] = db => {
-    const engine = this.engines.find(e => e.name === db.engline);
+    const engine = this.engines.find(e => e.name === db.engine);
     if (!engine) {
-      throw new QueryBuilderEngineNotFoundError(db.engline);
+      throw new QueryBuilderEngineNotFoundError(db.engine);
     }
     const dbInfo: DbExtendedInfo<Engines, Db> = {
       ...(db as DbInfo<Engines["name"], Db["modelName"]>),
       engine,
-      engineName: db.engline as Engines["name"],
+      engineName: db.engine as Engines["name"],
     };
     this.dbs.push(dbInfo);
     const dbInfoWithoutModles: Omit<DbExtendedInfo<Engines, Db>, "models"> = {
