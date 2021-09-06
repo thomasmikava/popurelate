@@ -38,7 +38,7 @@ Book.
   populate('author').
   limit(5);
 ```
-This promise will return max 5 books which are not out of stock and in the matched documents, mongoose will populate the authors from users collection. In the end, final documents will `author` property will not be represented as ObjectId, but as an document from the User model.
+This promise will return max 5 books which are not out of stock and in the matched documents, mongoose will populate the authors from users collection. In the end, in the final documents `author` property will not be represented as ObjectId, but as an document from the User model.
 
 Now, what if we want to fetch only the books that are not out of stock and have premium member authors?
 Mongoose supports `match` while populating. At first, we might think that this will do the job:
@@ -55,7 +55,7 @@ Book.
 But this works quite differently. Instead of filtering out books that have premiumMember users as authors, it will filter out the users collections.
 In the end, mongoose will still return max 5 books but if the author is not a premium member, populated value will be null. Thus, you will get 5 books which will have `author` property populated only if corresponding user is a premium member.
 
-This is not what we wanted. We wanted 5 books which have premium member authors.
+This is not what we wanted. We wanted 5 in-stock books which have premium member authors.
 
 
 This is where `popurelate` comes handy.
@@ -65,6 +65,8 @@ First, create popurelate instance, add mongoose engine and list our models.
 ```ts
 
 import { createPopurelation } from "popurelate";
+import { defaultEngines } from "popurelate/lib/mongo";
+
 const dbQuery = createPopurelation()
 	.addEngine(defaultEngines.mongoose())
 	.addDb({
@@ -115,8 +117,8 @@ dbQuery.models("books").
   exec();
 ```
 
-Now we have achieved the original desire of fetching 5 books which have premium member user as an author.
-This is because popurelate constructs an aggregation pipeline for mongo and queries documents in one query, instead of performing additional queries after fetching like mongoose does.
+Now we have achieved the original desire of fetching 5 in-stock books which have premium member user as an author.
+This is because popurelate constructs an aggregation pipeline for mongo and queries documents in one request, instead of performing additional queries after fetching like mongoose does.
 Our constructed aggregation uses $lookup aggregation behind the curtain. It avoids you to write huge messy lookup queries.
 
 ## Deep aggregation
