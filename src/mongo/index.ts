@@ -168,7 +168,7 @@ const populatePipeline = (
   let bracketsIndex = pth.indexOf("[]");
   while (
     bracketsIndex !== -1 &&
-    bracketsIndex !== pth.length - "[]".length - 1
+    bracketsIndex !== pth.length - "[]".length
   ) {
     const subPath = pth.substr(0, bracketsIndex);
     const unwrappedPath = normalizeQueryPath(
@@ -189,7 +189,7 @@ const populatePipeline = (
   if (!populate.alreadyPopulated) {
     const isForeignArray = populate.foreignField.indexOf("[]") !== -1;
     const isLocalArray =
-      populate.localField.lastIndexOf("[]") === populate.localField.length - 2;
+      populate.localField.lastIndexOf("[]") === populate.localField.length - "[]".length;
     realPipelines.push({
       $lookup: getLookupPipeline({
         isLocalArray,

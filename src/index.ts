@@ -434,6 +434,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
         if (typeof sort !== "object" || sort === null) {
           return obj;
         }
+        if (typeof sort === "object" && isEmptyObject(sort)) return obj;
         return addPipeline({ sort });
       },
       project: project => {
@@ -461,6 +462,7 @@ class QueryBuilderCreator<Engines extends DefaultEngines, Db extends DefaultDb>
         if (typeof query !== "object" || query === null) {
           return obj;
         }
+        if (isEmptyObject(query)) return obj;
         return addPipeline({ query });
       },
       populate: (...args: any[]): any => {
@@ -1099,3 +1101,12 @@ export const getLastSkipAndLimitIndex = (pipelines: Pipeline[]) => {
   }
   return lastIndex;
 };
+
+const isEmptyObject = (obj) => {
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      if (obj[key] !== undefined) return false;
+    }
+  }
+  return true;
+}
